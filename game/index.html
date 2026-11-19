@@ -3,17 +3,44 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Block Dodger</title>
+<title>Velmara — Sunset Streets</title>
+<link rel="icon" href="data:,">
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #11141b; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1f2a; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  /* Read aloud, never shown: the status line screen readers announce. */
   #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .hud { position: fixed; inset: 0; pointer-events: none; color: #eef1f5; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
+  .hud-top-left { position: absolute; top: 14px; left: 16px; }
+  .hud-cash { font-size: 30px; font-weight: 800; color: #7ee787; }
+  .hud-objective { font-size: 17px; font-weight: 600; margin-top: 4px; max-width: 420px; }
+  .hud-district { font-size: 14px; color: #ffd98a; margin-top: 2px; }
+  .hud-top-right { position: absolute; top: 14px; right: 16px; text-align: right; }
+  .hud-stars { font-size: 26px; letter-spacing: 3px; color: #ffd94d; }
+  .hud-stars.hot { animation: pulse 0.8s infinite alternate; }
+  @keyframes pulse { from { opacity: 0.65; } to { opacity: 1; } }
+  .hud-health { margin-top: 6px; font-size: 13px; }
+  .hud-health-bar { width: 170px; height: 12px; background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.4); border-radius: 6px; overflow: hidden; margin-top: 3px; }
+  .hud-health-fill { height: 100%; width: 100%; background: #37c978; }
+  .hud-health-fill.low { background: #e5534b; }
+  .hud-ammo { font-size: 15px; margin-top: 6px; }
+  .hud-bottom-left { position: absolute; bottom: 14px; left: 16px; }
+  .hud-speed { font-size: 26px; font-weight: 800; }
+  .hud-hint { font-size: 13px; color: #cfd6de; margin-top: 2px; }
+  .hud-minimap { position: absolute; right: 16px; bottom: 14px; width: 190px; height: 190px; border: 2px solid rgba(255,255,255,0.5); border-radius: 8px; background: #10141c; }
+  .hud-toasts { position: absolute; top: 96px; left: 50%; transform: translateX(-50%); font-size: 19px; font-weight: 700; color: #ffd98a; background: rgba(0,0,0,0.55); padding: 8px 18px; border-radius: 8px; opacity: 0; transition: opacity 0.25s; white-space: nowrap; }
+  .hud-toasts.show { opacity: 1; }
+  .hud-panel { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(10,12,18,0.55); }
+  .hud-panel.show { display: flex; flex-direction: column; }
+  .hud-panel h1 { font-size: 64px; letter-spacing: 8px; margin: 0 0 12px 0; color: #ffd98a; text-align: center; }
+  .hud-panel-lines { font-size: 18px; line-height: 1.55; color: #eef1f5; text-align: center; }
+  .hud-panel-prompt { font-size: 20px; font-weight: 700; color: #7ee787; margin-top: 22px; text-align: center; }
+  .hud-panel > div { max-width: 640px; text-align: center; }
 </style>
 </head>
 <body>
-<canvas id="game" aria-label="Block Dodger: move the paddle left and right to dodge falling blocks and catch coins"></canvas>
+<canvas id="game" aria-label="Velmara: an open-world crime game. Drive, steal cars, run jobs and stay ahead of the police."></canvas>
 <p id="status" role="status" aria-live="polite"></p>
+<script src="./vendor/three.min.js"></script>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

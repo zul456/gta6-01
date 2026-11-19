@@ -1,124 +1,192 @@
-// The game's rules and state, with no drawing and no browser in it: the player's paddle, the
-// pool of falling blocks and coins, spawning, collisions, score, lives and level. step() advances
-// one fixed step and returns what happened as bit flags, so the caller can react without the
-// world knowing about screens or sound. Nothing here allocates after createWorld returns.
-import { BLOCK, COIN, FIELD, LEVEL, LIVES, PLAYER, POOL_SIZE } from './config.js';
+// world.js: the game state and the one step that advances it. No drawing and
+// no browser in it beyond the meshes the modules own: the player, the cars,
+// the people, the police and the missions, all stepped in a fixed order so
+// the simulation is the same at any frame rate.
 
-export const KIND_BLOCK = 0;
-export const KIND_COIN = 1;
+import { CAR, PLAYER, POLICE, STEP } from './config.js';
+import { makeRng } from './random.js';
+import { buildCity } from './city.js';
+import { createTraffic, createParked, stepTraffic, driveCar, resolveCarPair, nearestCar } from './vehicles.js';
+import { makePlayerMesh, stepPlayerOnFoot } from './player.js';
+import { createPeds, stepPeds } from './pedestrians.js';
+import { createPolice, stepPolice } from './police.js';
+import { createMissions, stepMissions, currentObjective, currentTarget } from './missions.js';
+import { ACTION_ENTER, ACTION_RELOAD } from './input.js';
 
-export const EVENT_HIT = 1;
-export const EVENT_COIN = 2;
-export const EVENT_OVER = 4;
+export function createWorld(seed, scene) {
+  const rng = makeRng(seed);
+  const city = buildCity(rng);
+  scene.add(city.group);
 
-function overlaps(a, b) {
-  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+  const G = {
+    seed,
+    rng,
+    time: 0,
+    city,
+    sceneRef: scene,
+    events: [],
+    cameraYaw: 0.6,
+    cameraFixed: false,
+    cameraLookAt: { x: 0, y: 1.6, z: 0 },
+    tracer: null,
+    shotFired: false,
+    busted: false,
+    wasted: false,
+    best: 0,
+    missionKills: 0,
+  };
+
+  const playerMesh = makePlayerMesh();
+  scene.add(playerMesh);
+  G.player = {
+    x: 100,
+    z: 0,
+    angle: 0,
+    health: PLAYER.health,
+    cash: 120,
+    ammo: PLAYER.pistolAmmo,
+    onFoot: true,
+    car: null,
+    mesh: playerMesh,
+    moving: false,
+  };
+  playerMesh.position.set(100, 0, 0);
+
+  G.traffic = createTraffic(rng, city, scene);
+  G.parked = createParked(rng, city, scene);
+  G.peds = createPeds(rng, city, scene);
+  createPolice(G, scene);
+  G.rivals = [];
+  createMissions(G, scene);
+
+  G.addHeat = (amount) => {
+    G.heat = Math.min(POLICE.maxStars * 100, G.heat + amount);
+    G.stars = Math.min(POLICE.maxStars, Math.floor(G.heat / 100));
+  };
+
+  G.missionTarget = currentTarget(G);
+  G.objective = currentObjective(G);
+  return G;
 }
 
-export function createWorld(random) {
-  const player = { x: 0, y: FIELD.groundY - PLAYER.height, width: PLAYER.width, height: PLAYER.height, invulnerable: 0 };
-  const items = [];
-  for (let index = 0; index < POOL_SIZE; index += 1) {
-    items.push({ active: false, kind: KIND_BLOCK, x: 0, y: 0, width: 0, height: 0, speed: 0 });
+function enterCar(G) {
+  const p = G.player;
+  const car = nearestCar(p.x, p.z, [...G.parked, ...G.traffic], PLAYER.enterRange);
+  if (!car) return false;
+  if (car.kind === 'traffic') {
+    // Pull the driver out: the car leaves the traffic flow and becomes yours.
+    const index = G.traffic.indexOf(car);
+    if (index !== -1) G.traffic.splice(index, 1);
   }
-  const state = { player, items, score: 0, lives: LIVES, level: 1, elapsed: 0, blockTimer: 0, coinTimer: 0 };
+  car.stolen = true;
+  p.car = car;
+  p.onFoot = false;
+  p.mesh.visible = false;
+  car.speed = 0;
+  G.addHeat(60);
+  G.events.push({ type: 'toast', text: 'Car stolen — the PD noticed' });
+  return true;
+}
 
-  function reset() {
-    player.x = (FIELD.width - player.width) / 2;
-    player.invulnerable = 0;
-    for (const item of items) item.active = false;
-    state.score = 0;
-    state.lives = LIVES;
-    state.level = 1;
-    state.elapsed = 0;
-    state.blockTimer = BLOCK.interval;
-    state.coinTimer = COIN.interval;
+function exitCar(G) {
+  const p = G.player;
+  const car = p.car;
+  if (!car) return;
+  car.speed = 0;
+  car.kind = 'parked';
+  // Step out to the car's left side.
+  const sideX = Math.cos(car.angle);
+  const sideZ = -Math.sin(car.angle);
+  p.x = car.x + sideX * 2.4;
+  p.z = car.z + sideZ * 2.4;
+  p.angle = car.angle;
+  p.onFoot = true;
+  p.car = null;
+  p.mesh.visible = true;
+  p.mesh.position.set(p.x, 0, p.z);
+}
+
+export function respawn(G) {
+  const p = G.player;
+  const hospital = G.city.landmarks.hospital;
+  if (p.car) {
+    p.car.speed = 0;
+    p.car = null;
+  }
+  p.x = hospital.x + 14;
+  p.z = hospital.z + 14;
+  p.angle = 0;
+  p.health = PLAYER.health;
+  p.ammo = PLAYER.pistolAmmo;
+  p.onFoot = true;
+  p.mesh.visible = true;
+  p.mesh.position.set(p.x, 0, p.z);
+  p.cash = Math.floor(p.cash * (1 - POLICE.bustFine));
+  G.heat = 0;
+  G.stars = 0;
+  G.bustHold = 0;
+  G.busted = false;
+  G.wasted = false;
+}
+
+export function stepWorld(G, input, actions, dt) {
+  G.time += dt;
+  G.shotFired = false;
+  const p = G.player;
+  const events = [];
+
+  if (actions & ACTION_ENTER) {
+    if (p.onFoot) enterCar(G);
+    else exitCar(G);
+  }
+  if (actions & ACTION_RELOAD && p.onFoot) {
+    p.ammo = PLAYER.pistolAmmo;
   }
 
-  function freeItem() {
-    for (let index = 0; index < items.length; index += 1) if (!items[index].active) return items[index];
-    return null;
-  }
-
-  function spawnBlock() {
-    const item = freeItem();
-    if (item === null) return;
-    item.active = true;
-    item.kind = KIND_BLOCK;
-    item.width = BLOCK.minWidth + random() * (BLOCK.maxWidth - BLOCK.minWidth);
-    item.height = BLOCK.height;
-    item.x = random() * (FIELD.width - item.width);
-    item.y = -item.height;
-    item.speed = BLOCK.speed + BLOCK.speedPerLevel * (state.level - 1) + random() * BLOCK.speedJitter;
-  }
-
-  function spawnCoin() {
-    const item = freeItem();
-    if (item === null) return;
-    item.active = true;
-    item.kind = KIND_COIN;
-    item.width = COIN.size;
-    item.height = COIN.size;
-    item.x = random() * (FIELD.width - item.width);
-    item.y = -item.height;
-    item.speed = COIN.speed + COIN.speedPerLevel * (state.level - 1);
-  }
-
-  function blockInterval() {
-    return Math.max(BLOCK.minInterval, BLOCK.interval * BLOCK.intervalScale ** (state.level - 1));
-  }
-
-  /**
-   * One fixed step. `direction` is -1, 0 or 1 (left, still, right). With `harmless` set (the title
-   * screen's backdrop) things fall but nothing touches the player and nothing scores.
-   */
-  function step(dt, direction, harmless) {
-    let events = 0;
-    state.elapsed += dt;
-    state.level = Math.min(LEVEL.max, 1 + Math.floor(state.elapsed / LEVEL.seconds));
-
-    player.x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * dt));
-    if (player.invulnerable > 0) player.invulnerable = Math.max(0, player.invulnerable - dt);
-
-    state.blockTimer -= dt;
-    if (state.blockTimer <= 0) {
-      spawnBlock();
-      state.blockTimer += blockInterval();
+  if (p.onFoot) {
+    const foot = stepPlayerOnFoot(G, input, actions, dt, G.city);
+    if (foot.punched) {
+      G.addHeat(35);
+      events.push({ type: 'punch' });
     }
-    state.coinTimer -= dt;
-    if (state.coinTimer <= 0) {
-      spawnCoin();
-      state.coinTimer += COIN.interval + random() * COIN.intervalJitter;
+    if (foot.shot) {
+      G.shotFired = true;
+      G.addHeat(25);
+      events.push({ type: 'shot' });
     }
-
-    for (let index = 0; index < items.length; index += 1) {
-      const item = items[index];
-      if (!item.active) continue;
-      item.y += item.speed * dt;
-      if (item.y > FIELD.groundY) {
-        item.active = false;
-        if (item.kind === KIND_BLOCK && !harmless) state.score += BLOCK.dodgePoints;
-        continue;
-      }
-      if (harmless || !overlaps(item, player)) continue;
-      if (item.kind === KIND_COIN) {
-        item.active = false;
-        state.score += COIN.points;
-        events |= EVENT_COIN;
-      } else if (player.invulnerable === 0) {
-        item.active = false;
-        state.lives -= 1;
-        player.invulnerable = PLAYER.invulnerable;
-        events |= EVENT_HIT;
-        if (state.lives === 0) {
-          events |= EVENT_OVER;
-          break;
-        }
-      }
-    }
-    return events;
+  } else if (p.car) {
+    driveCar(p.car, input.throttle(), input.steer(), dt, G.city, input.handbrake());
+    // The player rides the car: keep the player's position and facing glued
+    // to it, or the camera, minimap, police chase and mission distance would
+    // all keep pointing at the spot where the player got in.
+    p.x = p.car.x;
+    p.z = p.car.z;
+    p.angle = p.car.angle;
+    for (const car of G.traffic) resolveCarPair(p.car, car);
+    for (const car of G.policeCars) resolveCarPair(p.car, car);
   }
 
-  reset();
-  return { state, reset, step };
+  stepTraffic(G.traffic, dt, G.city, p.car);
+  stepPeds(G, dt);
+  stepPolice(G, dt, G.city);
+  stepMissions(G, dt);
+
+  // Mission events flow out to the HUD and the sound.
+  for (const event of G.events) events.push(event);
+  G.events.length = 0;
+
+  if (G.busted) {
+    events.push({ type: 'busted' });
+    respawn(G);
+  } else if (p.health <= 0) {
+    p.health = 0;
+    events.push({ type: 'wasted' });
+    G.wasted = true;
+    respawn(G);
+    G.wasted = false;
+  }
+
+  G.missionTarget = currentTarget(G);
+  G.objective = currentObjective(G);
+  return events;
 }

@@ -1,16 +1,17 @@
-// A working gta6-01 entry (Node 22, standard library only): the game is this directory's
-// game/ folder, plain static files a desktop browser loads offline (game/index.html and its ES
-// modules, no library and no network request), and the program hands it in. It copies game/ and
-// screenshots/ from beside this file to /output and writes /output/dossier.json, the summary the
-// judge reads, with the vendored make.fun library. Only the plumbing, not an open world: Block
-// Dodger, a plain 2D canvas game where a paddle dodges falling blocks and catches coins, with a
-// title screen, score, lives and levels, game over and restart, flat colours and no sound. Build
-// your own open-world crime game in its place (three.js or any library you vendor under game/),
-// put your 3 or 4 PNG or JPEG screenshots in screenshots/ (the first by name is the cover) and run it.
+// Velmara — a sun-soaked coastal open-world crime game for make.fun's
+// "Make GTA 6" bounty (Node 22, standard library only): the game is this
+// directory's game/ folder, plain static files a desktop browser loads
+// offline (game/index.html, three.js vendored under game/vendor/, no network
+// request), and the program hands it in. It copies game/ and screenshots/
+// from beside this file to /output and writes /output/dossier.json, the
+// summary the judge reads, with the vendored make.fun library.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
-// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
+// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output,
+// or pass --out <dir>:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+//   mkdir -p out && node main.ts --out out
+//   node main.ts --help
 
 import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -18,7 +19,23 @@ import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
-const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const outIndex = process.argv.indexOf('--out');
+const out = outIndex !== -1 && process.argv[outIndex + 1]
+  ? process.argv[outIndex + 1]
+  : (process.env.MAKEFUN_OUTPUT_DIR ?? '/output');
+
+if (process.argv.includes('--help')) {
+  console.log('Usage: node main.ts [--out <dir>]');
+  console.log('  Copies game/ and screenshots/ beside this file to /output');
+  console.log('  (or MAKEFUN_OUTPUT_DIR, or --out <dir>) and writes dossier.json.');
+  process.exit(0);
+}
+
+// Refuse to hand in a half-built entry: the game folder and the screenshots
+// the judge reads must both be there before anything is copied.
+for (const needed of ['game', 'screenshots']) {
+  if (!existsSync(join(here, needed))) throw new Error(`missing ${needed}/ beside main.ts`);
+}
 
 mkdirSync(out, { recursive: true });
 cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
@@ -39,3 +56,4 @@ writeFileSync(
     game_path_max_bytes: 1000,
   }),
 );
+console.log(`Wrote ${out}/dossier.json from ${join(here, 'game')} and ${join(here, 'screenshots')}.`);
